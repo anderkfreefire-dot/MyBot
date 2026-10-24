@@ -1,0 +1,99 @@
+import os
+import random
+import string
+from flask import Flask, jsonify, request
+import telebot
+from telebot import types
+
+# --- إعدادات البوت والسيرفر ---
+TOKEN = "8691941815:AAFScRfNLeJ9ojnmECHYhs1580tb3zBeM04"
+bot = telebot.TeleBot(TOKEN)
+
+app = Flask(__name__)
+
+DATABASE = {}
+
+def generate_credentials():
+  random_chars = "".join(random.choices(string.ascii_lowercase + string.digits, k=6))
+  username = f"3bdo_x69-{random_chars}"
+  random_digits = "".join(random.choices(string.digits, k=2))
+  password = f"3bdo_x{random_digits}"
+  return username, password
+
+def get_language_markup():
+  markup = types.InlineKeyboardMarkup(row_width=2)
+  markup.add(
+      types.InlineKeyboardButton("🇪🇬 عربي", callback_data="lang_ar"),
+      types.InlineKeyboardButton("🇬🇧 English", callback_data="lang_en"),
+  )
+  return markup
+
+@bot.message_handler(commands=["start"])
+def send_welcome(message):
+  welcome_text = "أهلاً بك! أنت حالياً مع بوت 3bdo 🤖\nWelcome! You are currently with 3bdo bot.\n\nمن فضلك اختر لغتك المفضلة / Please choose your language:"
+  bot.send_message(message.chat.id, welcome_text, reply_markup=get_language_markup())
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("lang_"))
+def language_selected(call):
+  lang = call.data.split("_")[1]
+  if lang == "ar":
+    text = "مرحباً بك في لوحة تحكم بوت 3bdo 🛠️\nاختر العملية التي تريد تنفيذها:"
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        types.InlineKeyboardButton("➕ إنشاء يوزر واشتراكات جديد", callback_data="create_user"),
+        types.InlineKeyboardButton("⚙️ إدارة اليوزرات (إيقاف/فتح)", callback_data="manage_users"),
+    )
+    bot.edit_message_text(text, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+  else:
+    text = "Welcome to 3bdo Bot Control Panel 🛠️\nChoose the action you want to perform:"
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        types.InlineKeyboardButton("➕ Create New User & Subscription", callback_data="create_user"),
+        types.InlineKeyboardButton("⚙️ Manage Users (Block/Active)", callback_data="manage_users"),
+    )
+    bot.edit_message_text(text, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data == "create_user")
+def ask_devices_and_duration(call):
+  msg = bot.send_message(call.message.chat.id, "أدخل تفاصيل الاشتراك بهذا الشكل:\n(عدد الأجهزة وعدد أيام المدة)\nمثال: `1 30`")
+  bot.register_next_step_handler(msg, process_user_creation)
+
+def process_user_creation(message):
+  try:
+    args = message.text.split()
+    devices = int(args[0])
+    days = int(args[1])
+    username, password = generate_credentials()
+    DATABASE[username] = {"password": password, "devices": devices, "days": days, "active": True}
+    response = f"✅ **تم إنشاء الحساب بنجاح!**\n\n👤 **اليوزر:** `{username}`\n🔑 **الباسورد:** `{password}`\n📱 **عدد الأجهزة:** `{devices}`\n⏳ **المدة:** `{days} يوم`"
+    bot.send_message(message.chat.id, response, parse_mode="Markdown")
+  except Exception as e:
+    bot.send_message(message.chat.id, "❌ خطأ في التنسيق. اكتب هكذا (مثال: `1 30`).")
+
+@bot.callback_query_handler(func=lambda call: call.data == "manage_users")
+def list_users_for_management(call):
+  if not DATABASE:
+    bot.answer_callback_query(call.id, "لا توجد يوزرات حتى الآن.")
+    return
+  markup = types.InlineKeyboardMarkup(row_width=1)
+  for user, info in DATABASE.items():
+    status = "🟢 مفعل" if info["active"] else "🔴 متوقف"
+    markup.add(types.InlineKeyboardButton(f"{user} ({status})", callback_data=f"toggle_{user}"))
+  bot.edit_message_text("اختر اليوزر لتغيير حالته:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("toggle_"))
+def toggle_user_status(call):
+  username = call.data.replace("toggle_", "")
+  if username in DATABASE:
+    DATABASE[username]["active"] = not DATABASE[username]["active"]
+    bot.answer_callback_query(call.id, "تم تغيير الحالة بنجاح")
+    list_users_for_management(call)
+
+@app.route("/")
+def home():
+  return "3bdo Bot is Running 24/7!"
+
+if __name__ == "__main__":
+  import threading
+  threading.Thread(target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))).start()
+  bot.infinity_polling()
